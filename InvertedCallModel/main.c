@@ -9,7 +9,7 @@ EVT_WDF_IO_QUEUE_IO_DEVICE_CONTROL InvertedEvtIoDeviceControl;
 
 typedef struct _INVERTED_DEVICE_CONTEXT {
     WDFQUEUE    NotificationQueue;
-    LONG        Sequence;
+    CHAR        Buffer[1005];
 } INVERTED_DEVICE_CONTEXT, * PINVERTED_DEVICE_CONTEXT;
 WDF_DECLARE_CONTEXT_TYPE_WITH_NAME(INVERTED_DEVICE_CONTEXT, InvertedGetContextFromDevice)
 
@@ -76,7 +76,7 @@ InvertedEvtDeviceAdd(
     }
 
     devContext = InvertedGetContextFromDevice(device);
-    devContext->Sequence = 1;
+    RtlZeroMemory(&devContext->Buffer, sizeof(&devContext->Buffer));
 
     status = WdfDeviceCreateSymbolicLink(
         device,
@@ -130,10 +130,12 @@ InvertedEvtNotify(
     _In_ PINVERTED_DEVICE_CONTEXT Context
 )
 {
+    __debugbreak();
+
     NTSTATUS status = STATUS_UNSUCCESSFUL;
     WDFREQUEST notifyRequest = NULL;
 
-    PULONG bufferPointer = NULL;
+    PCHAR bufferPointer = NULL;
     size_t bufferLength = 0;
     ULONG_PTR info = 0;
 
@@ -154,17 +156,24 @@ InvertedEvtNotify(
         (PVOID*)&bufferPointer,
         &bufferLength
     );
-    if ((!NT_SUCCESS(status)) || (bufferLength < sizeof(LONG)))
+    if ((!NT_SUCCESS(status)) || (bufferLength < sizeof(Context->Buffer)))
     {
         status = STATUS_SUCCESS;
         info = 0;
     }
     else
     {
-        *bufferPointer = InterlockedIncrement(&Context->Sequence);
+        CHAR newBuffer[1005] = { 0 };
+        RtlCopyMemory(&newBuffer, &Context->Buffer, sizeof(Context->Buffer));
+        newBuffer[1000] = 'A';
+        newBuffer[1001] = 'C';
+        newBuffer[1002] = 'K';
+        newBuffer[1003] = '\0';
+
+        RtlCopyMemory(bufferPointer, newBuffer, sizeof(newBuffer));
 
         status = STATUS_SUCCESS;
-        info = sizeof(LONG);
+        info = sizeof(Context->Buffer);
     }
 
     WdfRequestCompleteWithInformation(notifyRequest, status, info);
@@ -193,6 +202,27 @@ InvertedEvtIoDeviceControl(
     {
         case IOCTL_REVERSE:
         {
+            PCHAR inputBuffer = NULL;
+            size_t inputBufferLength = 0;
+
+            status = WdfRequestRetrieveInputBuffer(
+                Request,
+                1,
+                (PVOID*)&inputBuffer,
+                &inputBufferLength
+            );
+            if (!NT_SUCCESS(status))
+            {
+                WdfRequestCompleteWithInformation(
+                    Request,
+                    status,
+                    0
+                );
+                break;
+            }
+
+            RtlCopyMemory(devContext->Buffer, inputBuffer, inputBufferLength);
+
             status = WdfRequestForwardToIoQueue(
                 Request,
                 devContext->NotificationQueue

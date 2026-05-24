@@ -7,7 +7,7 @@ DWORD WINAPI CompletionPortThread(LPVOID PortHandle);
 typedef struct _OVL_WRAPPER
 {
     OVERLAPPED  Overlapped;
-    LONG        ReturnedSequence;
+    CHAR        Buffer[1005];
 } OVL_WRAPPER, * POVL_WRAPPER;
 
 #define FILE_DEVICE_INVERTED                    0xCF54
@@ -80,17 +80,27 @@ int main()
             }
             case 1:
             {
-                POVL_WRAPPER wrapper = reinterpret_cast<POVL_WRAPPER>(malloc(sizeof(wrapper)));
+                POVL_WRAPPER wrapper = reinterpret_cast<POVL_WRAPPER>(malloc(sizeof(*wrapper)));
+
                 if (NULL != wrapper)
                 {
                     RtlZeroMemory(wrapper, sizeof(*wrapper));
+
+                    for (int i = 0; i < 1000; i++)
+                    {
+                        wrapper->Buffer[i] = 'a' + rand() % 26;
+                    }
+                    wrapper->Buffer[1000] = '\0';
+
+                    printf("Buffer initial: %s\n", wrapper->Buffer);
+
                     DeviceIoControl(
                         driverHandle,
                         static_cast<DWORD>(IOCTL_REVERSE),
-                        nullptr,                    
-                        0,                          
-                        &wrapper->ReturnedSequence,  
-                        sizeof(LONG),                
+                        &wrapper->Buffer,                    
+                        sizeof(wrapper->Buffer),
+                        &wrapper->Buffer,  
+                        sizeof(wrapper->Buffer),                
                         nullptr,                    
                         &wrapper->Overlapped
                     );
@@ -104,9 +114,9 @@ int main()
             }
             case 2:
             {
-                char message[] = "Hello from user-mode!";
+                char message[100] = "Hello from user-mode!\0";
 
-                POVL_WRAPPER wrapper = reinterpret_cast<POVL_WRAPPER>(malloc(sizeof(wrapper)));
+                POVL_WRAPPER wrapper = reinterpret_cast<POVL_WRAPPER>(malloc(sizeof(*wrapper)));
                 if (NULL != wrapper)
                 {
                     RtlZeroMemory(wrapper, sizeof(*wrapper));
@@ -115,8 +125,8 @@ int main()
                         static_cast<DWORD>(IOCTL_DIRECT),
                         message,
                         sizeof(message),
-                        &wrapper->ReturnedSequence, 
-                        sizeof(LONG),             
+                        &wrapper->Buffer,
+                        sizeof(wrapper->Buffer),
                         nullptr,                     
                         &wrapper->Overlapped
                     ); 
@@ -154,6 +164,6 @@ DWORD WINAPI CompletionPortThread(LPVOID PortHandle)
         }
 
         POVL_WRAPPER wrap = reinterpret_cast<POVL_WRAPPER>(overlapped);
-        printf(">>> Notification received. Sequence = %ld \r\n", wrap->ReturnedSequence);
+        printf(">>> Notification received. Sequence = %s \r\n", wrap->Buffer);
     }
 }
