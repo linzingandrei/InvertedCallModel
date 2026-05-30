@@ -9,9 +9,13 @@ EVT_WDF_IO_QUEUE_IO_DEVICE_CONTROL InvertedEvtIoDeviceControl;
 
 typedef struct _INVERTED_DEVICE_CONTEXT {
     WDFQUEUE    NotificationQueue;
-    CHAR        Buffer[1005];
 } INVERTED_DEVICE_CONTEXT, * PINVERTED_DEVICE_CONTEXT;
 WDF_DECLARE_CONTEXT_TYPE_WITH_NAME(INVERTED_DEVICE_CONTEXT, InvertedGetContextFromDevice)
+
+typedef struct _REQUEST_CONTEXT {
+    CHAR        Buffer[1005];
+} REQUEST_CONTEXT, * PREQUEST_CONTEXT;
+WDF_DECLARE_CONTEXT_TYPE_WITH_NAME(REQUEST_CONTEXT, GetRequestContext)
 
 #define FILE_DEVICE_INVERTED                    0xCF54
 #define IOCTL_REVERSE     CTL_CODE(FILE_DEVICE_INVERTED, 2049, METHOD_BUFFERED, FILE_ANY_ACCESS)
@@ -76,7 +80,6 @@ InvertedEvtDeviceAdd(
     }
 
     devContext = InvertedGetContextFromDevice(device);
-    RtlZeroMemory(&devContext->Buffer, sizeof(&devContext->Buffer));
 
     status = WdfDeviceCreateSymbolicLink(
         device,
@@ -150,30 +153,31 @@ InvertedEvtNotify(
         return;
     }
 
+    PREQUEST_CONTEXT requestContext = NULL;
+    requestContext = GetRequestContext(notifyRequest);
+
     status = WdfRequestRetrieveOutputBuffer(
         notifyRequest,
         sizeof(LONG),
         (PVOID*)&bufferPointer,
         &bufferLength
     );
-    if ((!NT_SUCCESS(status)) || (bufferLength < sizeof(Context->Buffer)))
+    if ((!NT_SUCCESS(status)) || (bufferLength < sizeof(requestContext->Buffer)))
     {
         status = STATUS_SUCCESS;
         info = 0;
     }
     else
     {
-        CHAR newBuffer[1005] = { 0 };
-        RtlCopyMemory(&newBuffer, &Context->Buffer, sizeof(Context->Buffer));
-        newBuffer[1000] = 'A';
-        newBuffer[1001] = 'C';
-        newBuffer[1002] = 'K';
-        newBuffer[1003] = '\0';
+        requestContext->Buffer[1000] = 'A';
+        requestContext->Buffer[1001] = 'C';
+        requestContext->Buffer[1002] = 'K';
+        requestContext->Buffer[1003] = '\0';
 
-        RtlCopyMemory(bufferPointer, newBuffer, sizeof(newBuffer));
+        RtlCopyMemory(bufferPointer, requestContext->Buffer, sizeof(requestContext->Buffer));
 
         status = STATUS_SUCCESS;
-        info = sizeof(Context->Buffer);
+        info = sizeof(requestContext->Buffer);
     }
 
     WdfRequestCompleteWithInformation(notifyRequest, status, info);
@@ -204,6 +208,8 @@ InvertedEvtIoDeviceControl(
         {
             PCHAR inputBuffer = NULL;
             size_t inputBufferLength = 0;
+            WDF_OBJECT_ATTRIBUTES requestAttributes;
+            PREQUEST_CONTEXT requestContext = NULL;
 
             status = WdfRequestRetrieveInputBuffer(
                 Request,
@@ -221,7 +227,24 @@ InvertedEvtIoDeviceControl(
                 break;
             }
 
-            RtlCopyMemory(devContext->Buffer, inputBuffer, inputBufferLength);
+            WDF_OBJECT_ATTRIBUTES_INIT_CONTEXT_TYPE(&requestAttributes, REQUEST_CONTEXT);
+            status = WdfObjectAllocateContext(
+                Request,
+                &requestAttributes,
+                (PVOID*)&requestContext
+            );
+            if (!NT_SUCCESS(status))
+            {
+                WdfRequestCompleteWithInformation(
+                    Request,
+                    status,
+                    0
+                );
+                break;
+            }
+
+            RtlZeroMemory(requestContext->Buffer, sizeof(requestContext->Buffer));
+            RtlCopyMemory(requestContext->Buffer, inputBuffer, inputBufferLength);
 
             status = WdfRequestForwardToIoQueue(
                 Request,
